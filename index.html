@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>IRIAMランク管理</title>
+  <meta name="description" content="IRIAMライバー向けランク管理アプリ" />
+  <meta name="theme-color" content="#0e0a1a" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="IRIAMランク" />
+  <link rel="manifest" href="manifest.json" />
+  <link rel="apple-touch-icon" href="icon-192.png" />
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    body { background: #0e0a1a; color: #e0d0ff; font-family: 'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif; }
+    #app { max-width: 430px; margin: 0 auto; min-height: 100vh; }
+  </style>
+</head>
+<body>
+<div id="app"></div>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script type="text/babel">
+const { useState } = React;
+
+const SCORE_OPTIONS = [0, 1, 2, 4, 6];
+const SCORE_COLORS = { 0:"#a090c0", 1:"#a090c0", 2:"#a090c0", 4:"#a090c0", 6:"#a090c0" };
+
+function getOutcome(t) { return t>=18?"up":t>=12?"keep":"down"; }
+function toDateStr(y,m,d) { return `${y}-${String(m+1).padStart(2,'0')}-${String(d).padStart(2,'0')}`; }
+function getTodayStr() { const d=new Date(); return toDateStr(d.getFullYear(),d.getMonth(),d.getDate()); }
+
+function loadData() { try { const r=localStorage.getItem("iriam_v3"); return r?JSON.parse(r):null; } catch{return null;} }
+function saveData(d) { try { localStorage.setItem("iriam_v3",JSON.stringify(d)); } catch{} }
+const defaultData = () => ({ days:{}, periodStart: getTodayStr() });
+
+function calcLast7(days, periodStart) {
+  const allDates = Object.keys(days)
+    .filter(d => (!periodStart||d>=periodStart) && days[d].score!=null && !days[d].skip)
+    .sort();
+  const used = allDates.slice(0,7);
+  const total = used.reduce((s,d)=>s+(days[d].score||0),0);
+  const remaining = 7-used.length;
+  const firstDate = used[0]||null;
+  const lastDate  = used[used.length-1]||null;
+  return { total, remaining, count:used.length, used, firstDate, lastDate };
+}
+
+function ProgressBar({ value, max, color, label }) {
+  const pct = Math.min(100,(value/max)*100);
+  return (
+    <div style={{marginBottom:6}}>
+      {label && <div style={{fontSize:"0.68rem",color:"#9080b0",marginBottom:3,display:"flex",justifyContent:"space-between"}}>
+        <span>{label}</span><span style={{color}}>{value}/{max}</span>
+      </div>}
+      <div style={{background:"#2a2040",borderRadius:99,height:8,overflow:"hidden"}}>
+        <div style={{width:`${pct}%`,height:"100%",borderRadius:99,background:`linear-gradient(90deg,${color}88,${color})`,transition:"width 0.5s",boxShadow:`0 0 8px ${color}66`}} />
+      </div>
+    </div>
+  );
+}
+
+function OutcomeBanner({ outcome, total, remaining, periodFirst, periodLast }) {
+  const map = {
+    up:   { label:"ランクアップ 🎉", color:"#f5607c", bg:"#f5607c15" },
+    keep: { label:"ランクキープ ✨", color:"#60b8f5", bg:"#60b8f515" },
+    down: { label:"ランクダウン 💧", color:"#9ca3af", bg:"#9ca3af15" },
+  };
+  const m = map[outcome];
+  return (
+    <div style={{background:m.bg,border:`2px solid ${m.color}`,borderRadius:16,padding:"14px 16px",marginBottom:14}}>
+      <div style={{fontSize:"1.1rem",fontWeight:900,color:m.color}}>{m.label}</div>
+      <div style={{fontSize:"0.72rem",color:"#a090c0",marginTop:2}}>
+        現在 <strong style={{color:m.color}}>{total}pt</strong>
+        {remaining>0 && <span> ／ 残り{remaining}日</span>}
+      </div>
+      {periodFirst && periodLast && (
+        <div style={{marginTop:6,fontSize:"0.68rem",color:"#7060a0",display:"flex",alignItems:"center",gap:4}}>
+          <span style={{color:"#5a4880"}}>集計期間</span>
+          <span style={{color:"#a060d0",fontWeight:700}}>{periodFirst.slice(5).replace("-","/")} 〜 {periodLast.slice(5).replace("-","/")} </span>
+        </div>
+      )}
+      <div style={{marginTop:8}}>
+        <ProgressBar value={total} max={18} color="#f5607c" label="ランクアップ（18pt）" />
+        <ProgressBar value={total} max={12} color="#60b8f5" label="ランクキープ（12pt）" />
+      </div>
+    </div>
+  );
+}
+
+function DayModal({ dateStr, dayData, onSave, onClose }) {
+  const score = dayData?.score??null;
+  const skip  = dayData?.skip??false;
+  const parts = dateStr.split("-");
+  const label = `${parseInt(parts[1])}月${parseInt(parts[2])}日`;
+  const handleScore = (opt) => { onSave({ score: score===opt?null:opt, skip:false }); onClose(); };
+  const handleSkip  = ()    => { onSave({ score:null, skip:!skip }); onClose(); };
+  return (
+    <div style={{position:"fixed",inset:0,zIndex:200,display:"flex",flexDirection:"column",justifyContent:"flex-end"}} onClick={onClose}>
+      <div style={{background:"#181030",borderTop:"2px solid #3a2060",borderRadius:"20px 20px 0 0",padding:"20px 20px 40px",maxWidth:430,width:"100%",margin:"0 auto"}} onClick={e=>e.stopPropagation()}>
+        <div style={{width:40,height:4,background:"#3a2060",borderRadius:99,margin:"0 auto 16px"}} />
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:18}}>
+          <div style={{fontWeight:900,fontSize:"1.05rem",color:"#e0d0ff"}}>{label}</div>
+          <button onClick={handleSkip} style={{padding:"6px 14px",borderRadius:8,cursor:"pointer",fontWeight:700,fontSize:"0.8rem",background:skip?"#f5a62333":"#1e1640",color:skip?"#f5a623":"#7060a0",border:`1.5px solid ${skip?"#f5a623":"#3a3060"}`}}>
+            {skip?"SKIP中 ✓":"SKIP"}
+          </button>
+        </div>
+        <div style={{marginBottom:6}}>
+          <div style={{fontSize:"0.7rem",color:"#7060a0",marginBottom:10,fontWeight:700}}>デイリーランクスコア</div>
+          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:6}}>
+            {SCORE_OPTIONS.map(opt => {
+              const sel = !skip && score===opt;
+              const col = SCORE_COLORS[opt];
+              return (
+                <button key={opt} onClick={()=>handleScore(opt)} style={{padding:"14px 0",borderRadius:10,cursor:"pointer",fontWeight:900,fontSize:"1.2rem",background:sel?`${col}33`:"#13102a",color:sel?col:"#4a3870",border:`2px solid ${sel?col:"#2a2040"}`,boxShadow:sel?`0 0 12px ${col}55`:"none",opacity:skip?0.3:1,transition:"all 0.15s"}}>
+                  {opt===0?"±0":`+${opt}`}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        <div style={{marginTop:10,fontSize:"0.68rem",color:"#4a3870",textAlign:"center"}}>選択すると自動で閉じます</div>
+      </div>
+    </div>
+  );
+}
+
+function TabCalendar({ data, setData }) {
+  const today = getTodayStr();
+  const todayDate = new Date();
+  const [viewYear,  setViewYear]  = useState(todayDate.getFullYear());
+  const [viewMonth, setViewMonth] = useState(todayDate.getMonth());
+  const [modalDate, setModalDate] = useState(null);
+  const { days, periodStart } = data;
+  const { total, remaining, count, used, firstDate, lastDate } = calcLast7(days, periodStart);
+  const outcome = getOutcome(total);
+  const firstDay    = new Date(viewYear, viewMonth, 1).getDay();
+  const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate();
+  const prevMonth = () => viewMonth===0?(setViewYear(viewYear-1),setViewMonth(11)):setViewMonth(viewMonth-1);
+  const nextMonth = () => viewMonth===11?(setViewYear(viewYear+1),setViewMonth(0)):setViewMonth(viewMonth+1);
+  const saveDay = (dateStr, dd) => {
+    const prev = days[dateStr]||{};
+    setData({ ...data, days: { ...days, [dateStr]: { ...prev, ...dd } } });
+  };
+  const cells = [];
+  for(let i=0;i<firstDay;i++) cells.push(null);
+  for(let d=1;d<=daysInMonth;d++) cells.push(d);
+  return (
+    <div>
+      <OutcomeBanner outcome={outcome} total={total} remaining={remaining} periodFirst={firstDate} periodLast={lastDate} />
+      {count>0 && (
+        <div style={{marginBottom:14,background:"#1a1530",border:"1px solid #2a2040",borderRadius:10,padding:"10px 14px"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+            <div style={{fontSize:"0.68rem",color:"#6050a0",fontWeight:700}}>集計中（スキップ除く直近{count}日）</div>
+            {firstDate&&lastDate&&<div style={{fontSize:"0.68rem",color:"#a060d0",fontWeight:700}}>{firstDate.slice(5).replace("-","/")} 〜 {lastDate.slice(5).replace("-","/")}</div>}
+          </div>
+          <div style={{display:"flex",flexWrap:"wrap",gap:4}}>
+            {used.map(d => {
+              const sc = days[d].score||0;
+              const col = SCORE_COLORS[sc]||"#9ca3af";
+              return <span key={d} style={{fontSize:"0.7rem",background:`${col}22`,color:col,border:`1px solid ${col}44`,borderRadius:6,padding:"2px 7px"}}>{d.slice(5)} {sc===0?"±0":`+${sc}`}</span>;
+            })}
+          </div>
+        </div>
+      )}
+      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+        <button onClick={prevMonth} style={{background:"none",border:"none",color:"#a090c0",fontSize:"1.4rem",cursor:"pointer",padding:"4px 12px"}}>‹</button>
+        <span style={{fontWeight:900,color:"#e0d0ff",fontSize:"0.95rem"}}>{viewYear}年{viewMonth+1}月</span>
+        <button onClick={nextMonth} style={{background:"none",border:"none",color:"#a090c0",fontSize:"1.4rem",cursor:"pointer",padding:"4px 12px"}}>›</button>
+      </div>
+      <div style={{background:"#1a1530",borderRadius:14,padding:"10px 8px",marginBottom:14}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",marginBottom:4}}>
+          {["日","月","火","水","木","金","土"].map((wd,i)=>(
+            <div key={wd} style={{textAlign:"center",fontSize:"0.65rem",color:i===0?"#f5607c88":i===6?"#60b8f588":"#5a4880",paddingBottom:4,fontWeight:700}}>{wd}</div>
+          ))}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
+          {cells.map((d,i)=>{
+            if(!d) return <div key={i}/>;
+            const dateStr = toDateStr(viewYear,viewMonth,d);
+            const dd = days[dateStr];
+            const isUsed         = used.includes(dateStr);
+            const isBeforePeriod = periodStart && dateStr<periodStart;
+            const isPeriodStart  = periodStart && dateStr===periodStart;
+            const isPeriodEnd    = lastDate && dateStr===lastDate;
+            const isInRange      = firstDate && lastDate && dateStr>=firstDate && dateStr<=lastDate;
+            const score = dd?.score;
+            const skip  = dd?.skip;
+            const col = score!=null?SCORE_COLORS[score]:null;
+            const dow = new Date(viewYear,viewMonth,d).getDay();
+            return (
+              <button key={i} onClick={()=>!isBeforePeriod&&setModalDate(dateStr)} style={{
+                aspectRatio:"1",borderRadius:10,cursor:isBeforePeriod?"default":"pointer",opacity:isBeforePeriod?0.2:1,
+                background:skip?"#2a1e48":isUsed?`${col}33`:score!=null&&!skip?`${col}11`:isInRange?"#261e44":"transparent",
+                border:isPeriodStart?"2px solid #a060d0":isPeriodEnd?"2px solid #a060d0":isUsed?`2px solid ${col}88`:skip&&isInRange?"1.5px solid #f5a62355":isInRange?"1.5px solid #3a2860":"1.5px solid transparent",
+                color:isBeforePeriod?"#3a2860":skip?"#f5a623aa":score!=null?col:dow===0?"#f5607c99":dow===6?"#60b8f599":"#a090c0",
+                fontWeight:isPeriodStart||isPeriodEnd?900:600,fontSize:"0.78rem",position:"relative",
+                display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"2px 0",transition:"all 0.1s"
+              }}>
+                <span>{d}</span>
+                {isPeriodStart&&<span style={{fontSize:"0.42rem",color:"#a060d0",lineHeight:1.1,fontWeight:900}}>START</span>}
+                {isPeriodEnd&&!isPeriodStart&&<span style={{fontSize:"0.42rem",color:"#a060d0",lineHeight:1.1,fontWeight:900}}>END</span>}
+                {score!=null&&!skip&&!isPeriodStart&&!isPeriodEnd&&<span style={{fontSize:"0.55rem",fontWeight:900,color:col,lineHeight:1}}>{score===0?"±0":`+${score}`}</span>}
+                {score!=null&&!skip&&(isPeriodStart||isPeriodEnd)&&<span style={{fontSize:"0.48rem",fontWeight:900,color:col,lineHeight:1}}>{score===0?"±0":`+${score}`}</span>}
+                {skip&&<span style={{fontSize:"0.48rem",color:"#f5a623aa"}}>SKIP</span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <div style={{display:"flex",flexWrap:"wrap",gap:6,marginBottom:16}}>
+        <span style={{fontSize:"0.65rem",color:"#a090c0",background:"#a090c022",border:"1px solid #a090c055",borderRadius:6,padding:"2px 8px"}}>スコア</span>
+        <span style={{fontSize:"0.65rem",color:"#f5a623",background:"#f5a62322",border:"1px solid #f5a62355",borderRadius:6,padding:"2px 8px"}}>SKIP</span>
+        <span style={{fontSize:"0.65rem",color:"#a060d0",background:"#a060d022",border:"1px solid #a060d055",borderRadius:6,padding:"2px 8px"}}>START / END</span>
+      </div>
+      {modalDate&&<DayModal dateStr={modalDate} dayData={days[modalDate]} onSave={dd=>saveDay(modalDate,dd)} onClose={()=>setModalDate(null)} />}
+    </div>
+  );
+}
+
+function TabSettings({ data, setData }) {
+  const { periodStart } = data;
+  const today = getTodayStr();
+  const todayDate = new Date();
+  const [pickYear,  setPickYear]  = useState(todayDate.getFullYear());
+  const [pickMonth, setPickMonth] = useState(todayDate.getMonth());
+  const firstDay    = new Date(pickYear,pickMonth,1).getDay();
+  const daysInMonth = new Date(pickYear,pickMonth+1,0).getDate();
+  const prevPick = () => pickMonth===0?(setPickYear(pickYear-1),setPickMonth(11)):setPickMonth(pickMonth-1);
+  const nextPick = () => pickMonth===11?(setPickYear(pickYear+1),setPickMonth(0)):setPickMonth(pickMonth+1);
+  const cells=[];
+  for(let i=0;i<firstDay;i++) cells.push(null);
+  for(let d=1;d<=daysInMonth;d++) cells.push(d);
+  return (
+    <div>
+      <div style={{marginBottom:20,background:"#1e1640",border:"1.5px solid #a060d055",borderRadius:14,padding:"16px"}}>
+        <div style={{fontSize:"0.8rem",color:"#a060d0",fontWeight:700,letterSpacing:"0.08em",marginBottom:4}}>📅 集計期間の開始日</div>
+        <div style={{fontSize:"0.78rem",color:"#7060a0",marginBottom:12}}>
+          {periodStart?<span>現在：<strong style={{color:"#a060d0"}}>{periodStart.replace(/-/g,"/")}</strong></span>:<span style={{color:"#5a4880"}}>未設定</span>}
+        </div>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+          <button onClick={prevPick} style={{background:"none",border:"none",color:"#a090c0",fontSize:"1.3rem",cursor:"pointer",padding:"2px 10px"}}>‹</button>
+          <span style={{fontWeight:900,color:"#e0d0ff",fontSize:"0.9rem"}}>{pickYear}年{pickMonth+1}月</span>
+          <button onClick={nextPick} style={{background:"none",border:"none",color:"#a090c0",fontSize:"1.3rem",cursor:"pointer",padding:"2px 10px"}}>›</button>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",marginBottom:4}}>
+          {["日","月","火","水","木","金","土"].map((wd,i)=>(
+            <div key={wd} style={{textAlign:"center",fontSize:"0.62rem",color:i===0?"#f5607c88":i===6?"#60b8f588":"#5a4880",paddingBottom:3,fontWeight:700}}>{wd}</div>
+          ))}
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",gap:2}}>
+          {cells.map((d,i)=>{
+            if(!d) return <div key={i}/>;
+            const dateStr=toDateStr(pickYear,pickMonth,d);
+            const isFuture=dateStr>today;
+            const isSelected=dateStr===periodStart;
+            const isToday=dateStr===today;
+            const dow=new Date(pickYear,pickMonth,d).getDay();
+            return (
+              <button key={i} disabled={isFuture} onClick={()=>setData({...data,periodStart:dateStr})} style={{
+                aspectRatio:"1",borderRadius:8,cursor:isFuture?"default":"pointer",opacity:isFuture?0.25:1,
+                background:isSelected?"#a060d044":isToday?"#2a1a3e":"transparent",
+                border:isSelected?"2px solid #a060d0":isToday?"2px solid #7c72f544":"1.5px solid transparent",
+                color:isSelected?"#c080f0":isFuture?"#3a2860":dow===0?"#f5607c88":dow===6?"#60b8f588":"#a090c0",
+                fontWeight:isSelected||isToday?900:600,fontSize:"0.78rem",transition:"all 0.1s"
+              }}>{d}</button>
+            );
+          })}
+        </div>
+        <div style={{fontSize:"0.68rem",color:"#5a4880",marginTop:10,lineHeight:1.6}}>タップした日が開始日になります。</div>
+      </div>
+      <button onClick={()=>{if(window.confirm("全データをリセットしますか？")){const d=defaultData();setData(d);saveData(d);}}} style={{width:"100%",padding:"12px",borderRadius:12,cursor:"pointer",background:"#1a1530",border:"1.5px solid #3a3060",color:"#5a4880",fontSize:"0.85rem",fontWeight:700}}>
+        データをリセット
+      </button>
+    </div>
+  );
+}
+
+function App() {
+  const [data, setDataRaw] = useState(()=>loadData()||defaultData());
+  const [tab, setTab] = useState("calendar");
+  const setData = (d) => { setDataRaw(d); saveData(d); };
+  const tabs = [
+    { id:"calendar", label:"カレンダー", icon:"📅" },
+    { id:"settings", label:"設定",       icon:"⚙️" },
+  ];
+  return (
+    <div style={{minHeight:"100vh",background:"#0e0a1a",color:"#e0d0ff",fontFamily:"'Hiragino Kaku Gothic ProN','Noto Sans JP',sans-serif",maxWidth:430,margin:"0 auto"}}>
+      <div style={{background:"linear-gradient(135deg,#2a1a3e,#1a0e2e)",borderBottom:"1.5px solid #3a2060",padding:"18px 20px 14px",position:"sticky",top:0,zIndex:100}}>
+        <div style={{fontSize:"0.62rem",color:"#a060d0",fontWeight:700,letterSpacing:"0.2em",marginBottom:2}}>IRIAM</div>
+        <div style={{fontSize:"1.1rem",fontWeight:900,color:"#e0d0ff"}}>ランク管理</div>
+      </div>
+      <div style={{padding:"16px 14px 100px"}}>
+        {tab==="calendar"&&<TabCalendar data={data} setData={setData} />}
+        {tab==="settings"&&<TabSettings data={data} setData={setData} />}
+      </div>
+      <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:"#0e0a1a",borderTop:"1.5px solid #2a2040",display:"flex",zIndex:100}}>
+        {tabs.map(t=>(
+          <button key={t.id} onClick={()=>setTab(t.id)} style={{flex:1,padding:"12px 0",border:"none",cursor:"pointer",background:tab===t.id?"#1e1640":"transparent",color:tab===t.id?"#f5607c":"#6050a0",borderTop:tab===t.id?"2px solid #f5607c":"2px solid transparent",transition:"all 0.2s"}}>
+            <div style={{fontSize:"1.2rem"}}>{t.icon}</div>
+            <div style={{fontSize:"0.65rem",fontWeight:700}}>{t.label}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("app")).render(<App />);
+</script>
+
+<script>
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('./sw.js'));
+}
+</script>
+</body>
+</html>
