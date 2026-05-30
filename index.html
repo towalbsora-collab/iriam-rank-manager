@@ -254,16 +254,15 @@ function TabSettings({ data, setData }) {
           {cells.map((d,i)=>{
             if(!d) return <div key={i}/>;
             const dateStr=toDateStr(pickYear,pickMonth,d);
-            const isFuture=dateStr>today;
             const isSelected=dateStr===periodStart;
             const isToday=dateStr===today;
             const dow=new Date(pickYear,pickMonth,d).getDay();
             return (
-              <button key={i} disabled={isFuture} onClick={()=>setData({...data,periodStart:dateStr})} style={{
-                aspectRatio:"1",borderRadius:8,cursor:isFuture?"default":"pointer",opacity:isFuture?0.25:1,
+              <button key={i} onClick={()=>setData({...data,periodStart:dateStr})} style={{
+                minHeight:"36px",borderRadius:8,cursor:"pointer",
                 background:isSelected?"#a060d044":isToday?"#2a1a3e":"transparent",
                 border:isSelected?"2px solid #a060d0":isToday?"2px solid #7c72f544":"1.5px solid transparent",
-                color:isSelected?"#c080f0":isFuture?"#3a2860":dow===0?"#f5607c88":dow===6?"#60b8f588":"#a090c0",
+                color:isSelected?"#c080f0":dow===0?"#f5607c88":dow===6?"#60b8f588":"#a090c0",
                 fontWeight:isSelected||isToday?900:600,fontSize:"0.78rem",transition:"all 0.1s"
               }}>{d}</button>
             );
